@@ -31,7 +31,7 @@ public class BatchProcessingApplication {
 
         [ Job Launcher ] ———> [ Job ] ———> [ Step ]  ———> [ItemReader] & [ItemProcessor] & [ItemWriter]
              |					|
-             |					| --- ———>  [ Step ]  ———> [ItemReader] & [ItemProcessor] & [ItemWriter]
+             |					| --- ———> -m [ Step ]  ———> [ItemReader] & [ItemProcessor] & [ItemWriter]
              |
 	         V
       [ Job Repository ] ———> [ Database ]
