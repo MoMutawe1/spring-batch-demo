@@ -185,14 +185,15 @@ public class BatchProcessingApplication {
                 .sql(sql)
                 .dataSource(datasource)
                 .itemSqlParameterSourceProvider(item -> {
+                    System.out.println(item.global_sales());
                     var map = new HashMap<String, Object>();
                     map.putAll(Map.of(
                             "id", item.id(),
-                            "name", item.name(),
-                            "platform", item.platform(),
+                            "name", item.name().trim(),
+                            "platform", item.platform().trim(),
                             "year", item.year(),
-                            "genre", item.genre(),
-                            "publisher", item.publisher()
+                            "genre", item.genre().trim(),
+                            "publisher", item.publisher().trim()
                     ));
                     map.putAll(Map.of(
                             "na_sales", item.na_sales(),
@@ -203,21 +204,7 @@ public class BatchProcessingApplication {
                     ));
                     return new MapSqlParameterSource(map);
                 })
-                .itemPreparedStatementSetter((row, preparedStatement) -> {
-                    var i = 0;
-                    preparedStatement.setInt(i++, row.id());
-                    preparedStatement.setString(i++, row.name());
-                    preparedStatement.setString(i++, row.platform());
-                    preparedStatement.setInt(i++, row.year());
-                    preparedStatement.setString(i++, row.genre());
-                    preparedStatement.setString(i++, row.publisher());
-                    preparedStatement.setFloat(i++, row.na_sales());
-                    preparedStatement.setFloat(i++, row.eu_sales());
-                    preparedStatement.setFloat(i++, row.jp_sales());
-                    preparedStatement.setFloat(i++, row.other_sales());
-                    preparedStatement.setFloat(i++, row.global_sales());
-                    preparedStatement.execute();
-               }).build();
+                .build();
     }
 
     @Bean
