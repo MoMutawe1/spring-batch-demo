@@ -7,26 +7,30 @@ import org.springframework.batch.core.launch.JobLauncher;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.core.step.tasklet.Tasklet;
-import org.springframework.batch.item.Chunk;
-import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.database.BeanPropertyItemSqlParameterSourceProvider;
+import org.springframework.batch.item.database.ItemPreparedStatementSetter;
+import org.springframework.batch.item.database.ItemSqlParameterSourceProvider;
+import org.springframework.batch.item.database.JdbcBatchItemWriter;
+import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
 import org.springframework.batch.item.file.FlatFileItemReader;
 import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
-import org.springframework.batch.item.support.ListItemReader;
 import org.springframework.batch.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
-import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
-import java.io.InputStreamReader;
-import java.util.Arrays;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 @SpringBootApplication
@@ -80,8 +84,9 @@ public class BatchProcessingApplication {
         };
     }
 
-    record CsvRow(int i, String s, String readString, int readInt, String string, String s1, float v, float readFloat,
-                  float aFloat, float v1, float readFloat1){}
+    public record CsvRow(int id, String name, String platform, int year, String genre, String publisher, float na_sales, float eu_sales,
+                  float jp_sales, float other_sales, float global_sales){
+    }
 
     private static int parseInt(String text){
         if(text!=null && !text.contains("NA") && !text.contains("N/A")) return Integer.parseInt(text);
@@ -95,10 +100,10 @@ public class BatchProcessingApplication {
                 .resource(resource)
                 .name("csvFFIR")
                 .delimited().delimiter(",")
-                .names("rank,name,platform,year,genre,publisher,na_sales,eu_sales,jp_sales,other_sales,global_sales".split(","))
+                .names("id,name,platform,year,genre,publisher,na_sales,eu_sales,jp_sales,other_sales,global_sales".split(","))
                 .linesToSkip(1)
                 .fieldSetMapper(fieldSet -> new CsvRow(
-                        fieldSet.readInt("rank"),
+                        fieldSet.readInt("id"),
                         fieldSet.readString("name"),
                         fieldSet.readString("platform"),
                         parseInt(fieldSet.readString("year")),
@@ -118,25 +123,109 @@ public class BatchProcessingApplication {
     //chunk: how many record you think can handle at a time safely without getting invalid records from your csv file, just to avoid rollback a big chunk of data.
     //reader: read data from the csv file, the contract is you return one line from every single read you return (so here we are reading the data one line at a time).
     @Bean
-    Step csvToDB(JobRepository jobRepository, PlatformTransactionManager ptm,
+    Step csvToConsole(JobRepository jobRepository, PlatformTransactionManager ptm,
                  FlatFileItemReader <CsvRow> csvRowFlatFileItemReader) throws Exception{
 
-        return new StepBuilder("csvToDB", jobRepository)
+        return new StepBuilder("csvToConsole", jobRepository)
                 .<CsvRow, CsvRow> chunk(100, ptm)
                 .reader(csvRowFlatFileItemReader)
                 .writer(chunk -> {
                     var oneHundredRows = chunk.getItems();
-                    System.out.println("got " + oneHundredRows.size());  // print the size of each chunk
+                    System.out.println("got " + oneHundredRows.size() + " data chunk..");  // print the size of each chunk
                     System.out.println(oneHundredRows);     // print all the chunks to the console for testing
                 })
                 .build();
         }
 
     @Bean
-    Job job(JobRepository jobRepository, Step step, Step csvToDB) {
+    Step csvToDB(JobRepository jobRepository, PlatformTransactionManager ptm,
+                 FlatFileItemReader <CsvRow> csvRowFlatFileItemReader,
+                 JdbcBatchItemWriter<CsvRow> csvRowJdbcBatchItemWriter) throws Exception{
+
+        return new StepBuilder("csvToDB", jobRepository)
+                .<CsvRow, CsvRow> chunk(100, ptm)
+                .reader(csvRowFlatFileItemReader)
+                .writer(csvRowJdbcBatchItemWriter)
+                .build();
+                }
+
+// "id,name,platform,year,genre,publisher,na_sales,eu_sales,jp_sales,other_sales,global_sales"
+    @Bean
+    JdbcBatchItemWriter <CsvRow> csvRowJdbcBatchItemWriter(DataSource datasource) {
+        var sql = """
+                              INSERT INTO video_games_sales(
+                              id            ,
+                              name          ,
+                              platform      ,
+                              year          ,
+                              genre         ,
+                              publisher     ,
+                              na_sales      ,
+                              eu_sales      ,
+                              jp_sales      ,
+                              other_sales   ,
+                              global_sales  )
+                              
+                              VALUES (
+                              :id            ,
+                              :name          ,
+                              :platform      ,
+                              :year          ,
+                              :genre         ,
+                              :publisher     ,
+                              :na_sales      ,
+                              :eu_sales      ,
+                              :jp_sales      ,
+                              :other_sales   ,
+                              :global_sales 
+                              );
+                """;
+
+        return new JdbcBatchItemWriterBuilder<CsvRow>()
+                .sql(sql)
+                .dataSource(datasource)
+                .itemSqlParameterSourceProvider(item -> {
+                    var map = new HashMap<String, Object>();
+                    map.putAll(Map.of(
+                            "id", item.id(),
+                            "name", item.name(),
+                            "platform", item.platform(),
+                            "year", item.year(),
+                            "genre", item.genre(),
+                            "publisher", item.publisher()
+                    ));
+                    map.putAll(Map.of(
+                            "na_sales", item.na_sales(),
+                            "eu_sales", item.eu_sales(),
+                            "jp_sales", item.jp_sales(),
+                            "other_sales", item.other_sales(),
+                            "global_sales", item.global_sales()
+                    ));
+                    return new MapSqlParameterSource(map);
+                })
+                .itemPreparedStatementSetter((row, preparedStatement) -> {
+                    var i = 0;
+                    preparedStatement.setInt(i++, row.id());
+                    preparedStatement.setString(i++, row.name());
+                    preparedStatement.setString(i++, row.platform());
+                    preparedStatement.setInt(i++, row.year());
+                    preparedStatement.setString(i++, row.genre());
+                    preparedStatement.setString(i++, row.publisher());
+                    preparedStatement.setFloat(i++, row.na_sales());
+                    preparedStatement.setFloat(i++, row.eu_sales());
+                    preparedStatement.setFloat(i++, row.jp_sales());
+                    preparedStatement.setFloat(i++, row.other_sales());
+                    preparedStatement.setFloat(i++, row.global_sales());
+                    preparedStatement.execute();
+               }).build();
+    }
+
+    @Bean
+    Job job(JobRepository jobRepository, Step step, Step csvToConsole, Step csvToDB) {
         return new JobBuilder("job", jobRepository)
                 .start(step)    // Job has a step, Step is being defined as a separate bean, this is our first step call
-                .start(csvToDB) // second step execution call
+                .start(csvToConsole) // second step execution call
+                .start(csvToDB)
                 .build();
     }
 

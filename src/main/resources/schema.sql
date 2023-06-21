@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS video_games_sales
 (
-    rank            INTEGER,
+    id              INTEGER,
     name            VARCHAR(50),
     platform        VARCHAR(50),
     year            INTEGER,
